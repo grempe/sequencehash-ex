@@ -35,7 +35,7 @@ defmodule SequenceHash.MixProject do
   end
 
   def cli do
-    [preferred_envs: [check: :test]]
+    [preferred_envs: [check: :test, "test.differential": :test]]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
@@ -65,7 +65,10 @@ defmodule SequenceHash.MixProject do
         "deps.audit",
         "dialyzer",
         "test --cover --warnings-as-errors"
-      ]
+      ],
+      # Opt-in comparison with the upstream Python and Rust implementations.
+      # Needs Python and Rust; see test/differential/differential_test.exs.
+      "test.differential": ["test --only differential"]
     ]
   end
 

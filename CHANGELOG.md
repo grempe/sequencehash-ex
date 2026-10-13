@@ -19,3 +19,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance tests against all C2SP/CCTV vectors, plus reference vectors for
   long customization strings.
 - Benchee benchmarks in `bench/`.
+- Opt-in differential tests against the upstream Python and Rust
+  implementations (`mix test.differential`).

@@ -165,6 +165,19 @@ input and many small inputs. The difference is the fixed cost of the
 construction: two hash computations, the key and header blocks, and a
 16-byte length suffix per input.
 
+### Differential tests
+
+An opt-in suite feeds the same generated inputs to this library and to the
+upstream [Python](https://github.com/trailofbits/sequencehash-py) and
+[Rust](https://github.com/trailofbits/sequencehash-rs) implementations, and
+requires identical hashes, tags and key rejections. It needs Python 3 and
+Cargo, so `mix test` and `mix check` skip it.
+
+```sh
+SEQUENCEHASH_PY=/path/to/sequencehash-py mix test.differential
+SEQUENCEHASH_ORACLES=rust SEQUENCEHASH_RUNS=10000 mix test.differential --seed 1
+```
+
 The test vectors are vendored under `test/vectors` (see the `SOURCE.md` and
 `README.md` files there) and are not included in the Hex package.
 

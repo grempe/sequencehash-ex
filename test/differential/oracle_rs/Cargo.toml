@@ -1,0 +1,17 @@
+# Differential-testing oracle backed by trailofbits/sequencehash-rs.
+# See ../oracle.py for the line protocol; this binary speaks the same one.
+[package]
+name = "sequencehash-oracle"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# Pinned so that a run is reproducible; bump deliberately.
+sequencehash = { git = "https://github.com/trailofbits/sequencehash-rs", rev = "e739b118044907146ef45c504caf678b9212d249" }
+blake2 = "0.10"
+digest = "0.10"
+crypto-common = "0.1"
+hex = "0.4"
+sha2 = "0.10"
+sha3 = "0.10"

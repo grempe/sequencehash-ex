@@ -28,3 +28,6 @@ sequencehash-*.tar
 # Editor tooling.
 /.elixir_ls/
 /.expert/
+
+# Built by Cargo if the differential oracle is compiled by hand.
+/test/differential/oracle_rs/target/
