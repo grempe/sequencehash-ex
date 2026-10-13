@@ -68,8 +68,8 @@ SequenceHash.result_with_customizer(hasher, "my-protocol/round-2")
 
 ### SequenceMAC
 
-Keys must be at least 32 bytes, and should be at least as long as the hash
-output.
+Keys must be at least 32 bytes. A key as long as the hash output is
+recommended; longer keys add no security.
 
 ```elixir
 key = :crypto.strong_rand_bytes(32)
@@ -81,7 +81,11 @@ true = SequenceHash.MAC.verify(:sha256, key, ["first", "second"], tag, customize
 
 # Streaming
 mac = SequenceHash.MAC.new!(:sha256, key) |> SequenceHash.MAC.add("first")
-SequenceHash.MAC.result(mac)
+mac = SequenceHash.MAC.add(mac, "second")
+SequenceHash.MAC.result_with_customizer(mac, "ctx")
+
+# Constant-time verification of a streamed MAC
+true = SequenceHash.MAC.verify_result(mac, tag, customizer: "ctx")
 
 SequenceHash.MAC.new(:sha256, "short")
 #=> {:error, :key_too_short}
@@ -101,7 +105,12 @@ reject such hashes as long as they say so.
 - **Inputs are binaries only.** iodata is rejected because a nested list would
   be flattened and concatenated, which is the ambiguity this library exists to
   prevent.
-- **Compare MAC tags with `SequenceHash.MAC.verify/5`**, not `==`.
+- **Compare MAC tags with `SequenceHash.MAC.verify/5` or
+  `SequenceHash.MAC.verify_result/3`**, not `==`.
+- **Keys stay out of error messages.** Functions that take a key check it in
+  the function body and raise errors that don't include it, so a bad call
+  (such as swapped arguments or a charlist key) can't copy the key into logs
+  or crash reports.
 - **Treat a MAC state as secret.** It has absorbed the derived key. Its
   `Inspect` output hides the key-dependent fields, but don't log it or send it
   elsewhere.
@@ -142,6 +151,19 @@ property tests.
 mix deps.get
 mix check   # format, unused deps, compile, Credo, audits, Dialyzer, tests with 100% coverage
 ```
+
+### Benchmarks
+
+```sh
+mix run bench/sequence_hash_bench.exs
+BENCH_ALGORITHMS=sha256,sha3_256 BENCH_TIME=5 mix run bench/sequence_hash_bench.exs
+```
+
+The benchmarks compare `SequenceHash.hash/3` and `SequenceHash.MAC.mac/4`
+with `:crypto.hash/2` over the same bytes, for one small input, one large
+input and many small inputs. The difference is the fixed cost of the
+construction: two hash computations, the key and header blocks, and a
+16-byte length suffix per input.
 
 The test vectors are vendored under `test/vectors` (see the `SOURCE.md` and
 `README.md` files there) and are not included in the Hex package.

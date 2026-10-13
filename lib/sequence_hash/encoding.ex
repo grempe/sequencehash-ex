@@ -131,10 +131,18 @@ defmodule SequenceHash.Encoding do
 
       iex> SequenceHash.Encoding.derive(String.duplicate("W", 65), :sha256, 0x5A) |> Base.encode16(case: :lower)
       "f26baffba4cd6018bebed0b8ed10bbe3ea892a8dfb03b992d2e270b3eb9faa8a0000000000000000000000000000000000000000000000000000000000000000"
+
+  Because `input` is often a key, invalid arguments raise an `ArgumentError`
+  that does not include them, rather than a `FunctionClauseError`, which would
+  carry the key into logs and crash reports.
   """
   @spec derive(binary(), Algorithm.t(), byte()) :: binary()
-  def derive(input, algorithm, tweak)
-      when is_binary(input) and is_integer(tweak) and tweak in 0..255 do
+  def derive(input, algorithm, tweak) do
+    if not is_binary(input), do: raise(ArgumentError, "Derive input must be a binary")
+
+    if not (is_integer(tweak) and tweak in 0..255),
+      do: raise(ArgumentError, "Derive tweak must be an integer in 0..255")
+
     block_size = Algorithm.block_size(algorithm)
 
     reduced =

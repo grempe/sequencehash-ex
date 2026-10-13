@@ -50,8 +50,17 @@ defmodule SequenceHash.Conformance.CCTVTest do
 
   # Keys shorter than 32 bytes must be rejected.
   defp check(%{"must_fail" => true, "function_id" => 1} = vector) do
-    assert MAC.new(Vectors.algorithm(vector["hash_name"]), hex(vector["key"])) ==
-             {:error, :key_too_short}
+    algorithm = Vectors.algorithm(vector["hash_name"])
+    key = hex(vector["key"])
+    inputs = Enum.map(vector["inputs"], &hex/1)
+
+    assert MAC.new(algorithm, key) == {:error, :key_too_short}
+    assert MAC.mac(algorithm, key, inputs) == {:error, :key_too_short}
+    assert_raise ArgumentError, fn -> MAC.new!(algorithm, key) end
+
+    assert_raise ArgumentError, fn -> MAC.verify(algorithm, key, inputs, "tag") end
+
+    assert_raise ArgumentError, fn -> SequenceFunction.new(algorithm, 1, key) end
   end
 
   defp check(%{"must_fail" => false} = vector) do
@@ -83,6 +92,7 @@ defmodule SequenceHash.Conformance.CCTVTest do
     assert SequenceFunction.inner_hash(state) == hex(vector["inner_hash"])
 
     expected = hex(vector["final_output"])
+    assert SequenceFunction.result(state, customizer) == expected
     assert public_api(function_id, algorithm, key, inputs, customizer) == expected
   end
 

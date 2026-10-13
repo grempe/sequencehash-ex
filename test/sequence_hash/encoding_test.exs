@@ -58,8 +58,16 @@ defmodule SequenceHash.EncodingTest do
 
   describe "derive/3" do
     test "rejects tweaks outside a byte" do
-      assert_raise FunctionClauseError, fn -> Encoding.derive("", :sha256, 256) end
-      assert_raise FunctionClauseError, fn -> Encoding.derive("", :sha256, -1) end
+      for bad <- [256, -1, 0.0, nil] do
+        assert_raise ArgumentError, ~r/tweak/, fn -> Encoding.derive("", :sha256, bad) end
+      end
+    end
+
+    test "rejects non-binary inputs without echoing them" do
+      for bad <- [~c"secret", :secret] do
+        error = assert_raise ArgumentError, fn -> Encoding.derive(bad, :sha256, 0) end
+        refute Exception.message(error) =~ "secret"
+      end
     end
 
     test "rejects unsupported algorithms" do

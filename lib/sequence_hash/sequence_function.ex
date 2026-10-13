@@ -27,10 +27,20 @@ defmodule SequenceHash.SequenceFunction do
   state and leaves the old one valid. That is what makes this struct an
   ordinary immutable value.
 
+  ## Keys
+
+  `new/3` enforces the key rules for each function indicator, so this module
+  cannot build a SequenceMAC with a key the specification forbids: SequenceMAC
+  (`F = 1`) keys must be at least 32 bytes, and SequenceHash (`F = 2`) has no
+  key, so its key must be empty.
+
   ## Secret material
 
   For SequenceMAC, `inner` and `outer` have absorbed the derived key blocks,
   so the struct is as sensitive as the key. Its `Inspect` output omits them.
+  Functions that receive a key check their arguments in the function body and
+  raise errors that do not include them, so a bad call cannot copy the key
+  into a crash report.
   The BEAM cannot reliably zeroize memory, so derived key blocks are not
   wiped (the specification says SHOULD); they are short-lived binaries that
   are reclaimed by garbage collection.
@@ -43,7 +53,6 @@ defmodule SequenceHash.SequenceFunction do
 
   alias SequenceHash.{Algorithm, Encoding}
 
-  @derive {Inspect, only: [:algorithm, :function_id, :key_length, :count]}
   @enforce_keys [:algorithm, :function_id, :key_length, :inner, :outer]
   defstruct [:algorithm, :function_id, :key_length, :inner, :outer, count: 0]
 
@@ -63,6 +72,12 @@ defmodule SequenceHash.SequenceFunction do
   @f_seqmac 1
   @f_seqhsh 2
 
+  @min_mac_key_length 32
+
+  # `add_all/2` hands inputs to the hash in batches of about this many bytes,
+  # so each batch costs one `:crypto.hash_update/2` call.
+  @batch_bytes 65_536
+
   @tweak_inner 0x55
   @tweak_outer 0xAA
   @tweak_customizer 0x00
@@ -78,12 +93,16 @@ defmodule SequenceHash.SequenceFunction do
   @doc """
   Starts a computation for `algorithm`, `function_id` and `key`.
 
-  This does not enforce the SequenceMAC minimum key length; that rule lives in
-  `SequenceHash.MAC.new/2`.
+  Raises `ArgumentError` for an unsupported algorithm, a function indicator
+  other than `1` or `2`, a SequenceMAC key shorter than 32 bytes, or a
+  non-empty SequenceHash key. The error never includes the key.
+
+      iex> SequenceHash.SequenceFunction.new(:sha256, 1, "too short")
+      ** (ArgumentError) SequenceMAC keys must be at least 32 bytes
   """
   @spec new(Algorithm.t(), function_id(), binary()) :: t()
-  def new(algorithm, function_id, key)
-      when function_id in [@f_seqmac, @f_seqhsh] and is_binary(key) do
+  def new(algorithm, function_id, key) do
+    check_key!(function_id, key)
     block_size = Algorithm.block_size(algorithm)
 
     inner =
@@ -113,11 +132,49 @@ defmodule SequenceHash.SequenceFunction do
   """
   @spec add(t(), binary()) :: t()
   def add(%__MODULE__{count: count} = state, message) when is_binary(message) do
+    %{
+      state
+      | inner: :crypto.hash_update(state.inner, Encoding.encode(message)),
+        count: next_count(count)
+    }
+  end
+
+  @doc """
+  Adds every input in `messages`, in order. The result is the same as calling
+  `add/2` for each one.
+
+  Inputs are passed to the hash in batches, so this is faster than `add/2`
+  for many small inputs. Raises `ArgumentError` if an input is not a binary.
+  """
+  @spec add_all(t(), Enumerable.t(binary())) :: t()
+  def add_all(%__MODULE__{} = state, messages) do
+    {state, batch, _bytes} = Enum.reduce(messages, {state, [], 0}, &batch_message/2)
+    absorb(state, batch)
+  end
+
+  defp batch_message(message, {state, batch, bytes}) when is_binary(message) do
+    state = %{state | count: next_count(state.count)}
+    batch = [batch | Encoding.encode(message)]
+    bytes = bytes + byte_size(message) + 16
+
+    if bytes >= @batch_bytes,
+      do: {absorb(state, batch), [], 0},
+      else: {state, batch, bytes}
+  end
+
+  defp batch_message(_message, _acc) do
+    raise ArgumentError, "inputs must be binaries"
+  end
+
+  defp absorb(state, []), do: state
+  defp absorb(state, batch), do: %{state | inner: :crypto.hash_update(state.inner, batch)}
+
+  defp next_count(count) do
     if count >= Encoding.max_uint128() do
       raise ArgumentError, "SequenceFunction cannot accept more than 2^128 - 1 inputs"
     end
 
-    %{state | inner: :crypto.hash_update(state.inner, Encoding.encode(message)), count: count + 1}
+    count + 1
   end
 
   @doc """
@@ -146,6 +203,25 @@ defmodule SequenceHash.SequenceFunction do
       inner_hash(state)
     ])
     |> :crypto.hash_final()
+  end
+
+  defp check_key!(function_id, key) do
+    cond do
+      function_id not in [@f_seqmac, @f_seqhsh] ->
+        raise ArgumentError, "function indicator must be 1 (SequenceMAC) or 2 (SequenceHash)"
+
+      not is_binary(key) ->
+        raise ArgumentError, "keys must be binaries"
+
+      function_id == @f_seqmac and byte_size(key) < @min_mac_key_length ->
+        raise ArgumentError, "SequenceMAC keys must be at least #{@min_mac_key_length} bytes"
+
+      function_id == @f_seqhsh and key != "" ->
+        raise ArgumentError, "SequenceHash does not take a key"
+
+      true ->
+        :ok
+    end
   end
 
   @doc """
@@ -183,4 +259,30 @@ defmodule SequenceHash.SequenceFunction do
       block_size
     )
   end
+end
+
+defimpl Inspect, for: SequenceHash.SequenceFunction do
+  # Written by hand rather than with `@derive {Inspect, only: ...}`. The
+  # derived version checks the field name with a chain of `orelse`, and OTP
+  # 27's `cover` rewrites such chains with variables named `_2`, `_3`, ...
+  # that can clash with the `_1` style names Elixir 1.20 generates, so
+  # `mix test --cover` fails on that pair. OTP 28 renamed those variables.
+  #
+  # Only fields that carry no key material are listed.
+  import Inspect.Algebra
+
+  def inspect(state, opts) do
+    fields = [
+      algorithm: state.algorithm,
+      function_id: state.function_id,
+      key_length: state.key_length,
+      count: state.count
+    ]
+
+    container_doc("#SequenceHash.SequenceFunction<", fields, ", ...>", opts, &field/2,
+      separator: ","
+    )
+  end
+
+  defp field({key, value}, opts), do: concat(["#{key}: ", to_doc(value, opts)])
 end
