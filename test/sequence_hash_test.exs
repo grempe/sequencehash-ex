@@ -70,7 +70,11 @@ defmodule SequenceHashTest do
         assert_raise FunctionClauseError, fn -> SequenceHash.add(hasher, bad) end
       end
 
-      assert_raise FunctionClauseError, fn -> SequenceHash.hash(:sha256, [["a"]]) end
+      for bad <- [["a"], ~c"a", nil] do
+        assert_raise ArgumentError, ~r/inputs must be binaries/, fn ->
+          SequenceHash.hash(:sha256, ["ok", bad])
+        end
+      end
     end
 
     test "customizers must be binaries" do
@@ -81,6 +85,36 @@ defmodule SequenceHashTest do
           SequenceHash.result_with_customizer(hasher, bad)
         end
       end
+    end
+
+    test "customizers that derive to the same block still differ" do
+      # Derive pads short customizers with zeros and hashes long ones, so
+      # "", <<0>> and <<0, 0>> derive to the same block, and so do a customizer
+      # longer than the block size and its hash. Only the customizer length
+      # in the outer header separates them.
+      long = :binary.copy(<<0x41>>, 65)
+
+      for algorithm <- SequenceHash.Algorithm.supported() do
+        hasher = SequenceHash.new(algorithm) |> SequenceHash.add("m")
+        long = :binary.copy(<<0x41>>, SequenceHash.block_size(hasher) + 1)
+
+        outputs =
+          for customizer <- ["", <<0>>, <<0, 0>>, long, :crypto.hash(algorithm, long)] do
+            SequenceHash.result_with_customizer(hasher, customizer)
+          end
+
+        assert outputs == Enum.uniq(outputs), inspect(algorithm)
+      end
+
+      key = :binary.copy(<<1>>, 32)
+
+      tags =
+        for customizer <- ["", <<0>>, <<0, 0>>, long, :crypto.hash(:sha256, long)] do
+          {:ok, tag} = SequenceHash.MAC.mac(:sha256, key, ["m"], customizer: customizer)
+          tag
+        end
+
+      assert tags == Enum.uniq(tags)
     end
 
     test "unknown options are rejected" do

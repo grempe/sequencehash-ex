@@ -10,6 +10,13 @@ defmodule SequenceHash.MACTest do
 
   @key32 :binary.copy(<<0x42>>, 32)
 
+  defp formatted_error(fun) do
+    fun.()
+    flunk("expected an error")
+  rescue
+    error in [ArgumentError] -> Exception.format(:error, error, __STACKTRACE__)
+  end
+
   describe "spec worked example" do
     test "SHA-256, 32-byte key, 4-byte zero customizer" do
       key = unhex("27ece6764c77eb17e28a4031878198f37ce95207205fba8671390c8d7449dc91")
@@ -86,7 +93,48 @@ defmodule SequenceHash.MACTest do
 
     test "keys must be binaries" do
       for bad <- [~c"0123456789012345678901234567890123", :key, nil] do
-        assert_raise FunctionClauseError, fn -> MAC.new(:sha256, bad) end
+        assert_raise ArgumentError, ~r/must be binaries/, fn -> MAC.new(:sha256, bad) end
+      end
+    end
+  end
+
+  # A FunctionClauseError records the call's arguments, and Logger and crash
+  # reports print them. These are the realistic mistakes; none of them may
+  # put the key into the formatted error.
+  describe "keys never appear in errors" do
+    @secret "do-not-log-this-key-0123456789abcdef"
+
+    test "swapped algorithm and key" do
+      for fun <- [
+            fn -> MAC.new(@secret, :sha256) end,
+            fn -> MAC.new!(@secret, :sha256) end,
+            fn -> MAC.mac(@secret, :sha256, ["m"]) end,
+            fn -> MAC.verify(@secret, :sha256, ["m"], "tag") end
+          ] do
+        refute formatted_error(fun) =~ "do-not-log-this-key"
+      end
+    end
+
+    test "a charlist key" do
+      key = String.to_charlist(@secret)
+
+      for fun <- [
+            fn -> MAC.new(:sha256, key) end,
+            fn -> MAC.mac(:sha256, key, ["m"]) end,
+            fn -> MAC.verify(:sha256, key, ["m"], "tag") end
+          ] do
+        output = formatted_error(fun)
+        refute output =~ "do-not-log-this-key"
+        refute output =~ inspect(key)
+      end
+    end
+
+    test "a bad input or option after a valid key" do
+      for fun <- [
+            fn -> MAC.mac(:sha256, @secret, [:not_a_binary]) end,
+            fn -> MAC.verify(:sha256, @secret, ["m"], "tag", bad: 1) end
+          ] do
+        refute formatted_error(fun) =~ "do-not-log-this-key"
       end
     end
   end
@@ -118,9 +166,37 @@ defmodule SequenceHash.MACTest do
       refute MAC.verify(:sha512, @key32, ["a", "b"], "", customizer: "ctx")
     end
 
+    test "rejects tags that are not binaries" do
+      for bad <- [nil, :tag, ~c"tag", 1] do
+        refute MAC.verify(:sha512, @key32, ["a", "b"], bad, customizer: "ctx")
+      end
+    end
+
     test "raises on configuration errors" do
       assert_raise ArgumentError, fn -> MAC.verify(:sha512, "short", ["a"], "tag") end
       assert_raise ArgumentError, fn -> MAC.verify(:sha512, @key32, ["a"], "tag", key: "x") end
+    end
+  end
+
+  describe "verify_result/3" do
+    setup do
+      {:ok, tag} = MAC.mac(:blake2b, @key32, ["a", "b"], customizer: "ctx")
+      %{tag: tag, mac: MAC.new!(:blake2b, @key32) |> MAC.add("a") |> MAC.add("b")}
+    end
+
+    test "accepts the correct tag", %{tag: tag, mac: mac} do
+      assert MAC.verify_result(mac, tag, customizer: "ctx")
+    end
+
+    test "rejects other customizers, inputs and tags", %{tag: tag, mac: mac} do
+      refute MAC.verify_result(mac, tag)
+      refute MAC.verify_result(MAC.add(mac, "c"), tag, customizer: "ctx")
+      refute MAC.verify_result(mac, binary_part(tag, 0, 63), customizer: "ctx")
+      refute MAC.verify_result(mac, nil, customizer: "ctx")
+    end
+
+    test "rejects unknown options", %{tag: tag, mac: mac} do
+      assert_raise ArgumentError, fn -> MAC.verify_result(mac, tag, key: @key32) end
     end
   end
 

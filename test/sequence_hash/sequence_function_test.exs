@@ -84,8 +84,75 @@ defmodule SequenceHash.SequenceFunctionTest do
   end
 
   test "rejects function indicators other than 1 and 2" do
-    for id <- [0, 3, -1] do
-      assert_raise FunctionClauseError, fn -> SequenceFunction.new(:sha256, id, "") end
+    for id <- [0, 3, -1, nil] do
+      assert_raise ArgumentError, ~r/function indicator/, fn ->
+        SequenceFunction.new(:sha256, id, "")
+      end
+    end
+  end
+
+  describe "key rules" do
+    test "SequenceMAC keys must be at least 32 bytes" do
+      for length <- [0, 1, 31] do
+        assert_raise ArgumentError, ~r/at least 32 bytes/, fn ->
+          SequenceFunction.new(:sha256, 1, :binary.copy(<<1>>, length))
+        end
+      end
+
+      assert %SequenceFunction{key_length: 32} =
+               SequenceFunction.new(:sha256, 1, :binary.copy(<<1>>, 32))
+    end
+
+    test "SequenceHash takes no key" do
+      assert_raise ArgumentError, ~r/does not take a key/, fn ->
+        SequenceFunction.new(:sha256, 2, :binary.copy(<<1>>, 32))
+      end
+    end
+
+    test "keys must be binaries" do
+      for id <- [1, 2], bad <- [~c"0123456789012345678901234567890123", nil] do
+        assert_raise ArgumentError, ~r/keys must be binaries/, fn ->
+          SequenceFunction.new(:sha256, id, bad)
+        end
+      end
+    end
+  end
+
+  describe "add_all/2" do
+    test "matches add/2 one input at a time, across batch boundaries" do
+      # Sizes chosen so batches fill and flush at different points.
+      inputs =
+        for size <- [0, 1, 70_000, 5, 65_519, 65_520, 0, 200_000, 3],
+            do: :binary.copy(<<7>>, size)
+
+      start = SequenceFunction.new(:sha256, 2, "")
+      one_by_one = Enum.reduce(inputs, start, &SequenceFunction.add(&2, &1))
+      batched = SequenceFunction.add_all(start, inputs)
+
+      assert batched.count == length(inputs)
+      assert SequenceFunction.result(batched, "") == SequenceFunction.result(one_by_one, "")
+    end
+
+    test "many small inputs" do
+      inputs = for i <- 1..5_000, do: Integer.to_string(i)
+      start = SequenceFunction.new(:blake2s, 2, "")
+
+      assert SequenceFunction.add_all(start, inputs) |> SequenceFunction.inner_hash() ==
+               Enum.reduce(inputs, start, &SequenceFunction.add(&2, &1))
+               |> SequenceFunction.inner_hash()
+    end
+
+    test "an empty enumerable adds nothing" do
+      start = SequenceFunction.new(:sha256, 2, "")
+      assert SequenceFunction.add_all(start, []) == start
+    end
+
+    test "refuses more than 2^128 - 1 inputs" do
+      state = %{SequenceFunction.new(:sha256, 2, "") | count: Encoding.max_uint128()}
+
+      assert_raise ArgumentError, ~r/more than 2\^128 - 1 inputs/, fn ->
+        SequenceFunction.add_all(state, [""])
+      end
     end
   end
 
@@ -101,10 +168,7 @@ defmodule SequenceHash.SequenceFunctionTest do
     state = SequenceFunction.new(:sha256, 1, :binary.copy(<<7>>, 32))
     output = inspect(state)
 
-    assert output =~ "algorithm: :sha256"
-    assert output =~ "key_length: 32"
-    refute output =~ "inner"
-    refute output =~ "outer"
-    refute output =~ "Reference"
+    assert output ==
+             "#SequenceHash.SequenceFunction<algorithm: :sha256, function_id: 1, key_length: 32, count: 0, ...>"
   end
 end

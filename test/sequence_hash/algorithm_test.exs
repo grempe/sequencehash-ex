@@ -25,10 +25,22 @@ defmodule SequenceHash.AlgorithmTest do
 
   describe "rejection" do
     test "insecure, short and unknown hashes are rejected" do
-      for algorithm <- [:sha, :md5, :md4, :sha224, :sha3_224, :ripemd160, :sha384, "sha256", nil] do
+      for algorithm <- [:sha, :md5, :md4, :sha224, :sha3_224, :ripemd160, :sha384, nil] do
         assert_raise ArgumentError, ~r/unsupported hash algorithm/, fn ->
           Algorithm.validate!(algorithm)
         end
+      end
+    end
+
+    test "values that are not atoms are rejected without being echoed" do
+      for {value, kind} <- [
+            {"secret key", "a binary"},
+            {~c"secret", "a list"},
+            {{:secret}, "a term"}
+          ] do
+        error = assert_raise ArgumentError, fn -> Algorithm.validate!(value) end
+        assert Exception.message(error) =~ "must be an atom, got #{kind}"
+        refute Exception.message(error) =~ "secret"
       end
     end
 

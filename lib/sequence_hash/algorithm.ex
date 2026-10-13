@@ -82,15 +82,31 @@ defmodule SequenceHash.Algorithm do
 
       iex> SequenceHash.Algorithm.validate!(:sha)
       ** (ArgumentError) unsupported hash algorithm :sha; supported algorithms are [:blake2b, :blake2s, :sha256, :sha3_256, :sha3_512, :sha512]
+
+  Values that are not atoms are not echoed in the message, because a common
+  mistake is to swap the algorithm and key arguments:
+
+      iex> SequenceHash.Algorithm.validate!("a secret key")
+      ** (ArgumentError) hash algorithm must be an atom, got a binary; supported algorithms are [:blake2b, :blake2s, :sha256, :sha3_256, :sha3_512, :sha512]
   """
   @spec validate!(term()) :: t()
   def validate!(algorithm) when is_supported(algorithm), do: algorithm
 
-  def validate!(algorithm) do
+  def validate!(algorithm) when is_atom(algorithm) do
     raise ArgumentError,
           "unsupported hash algorithm #{inspect(algorithm)}; " <>
             "supported algorithms are #{inspect(supported())}"
   end
+
+  def validate!(other) do
+    raise ArgumentError,
+          "hash algorithm must be an atom, got #{kind(other)}; " <>
+            "supported algorithms are #{inspect(supported())}"
+  end
+
+  defp kind(value) when is_binary(value), do: "a binary"
+  defp kind(value) when is_list(value), do: "a list"
+  defp kind(_value), do: "a term of another type"
 
   defp fetch!(algorithm), do: Map.fetch!(@sizes, validate!(algorithm))
 end

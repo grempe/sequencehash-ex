@@ -17,11 +17,10 @@ defmodule SequenceHash.MAC do
   ## Keys
 
   Keys must be at least 32 bytes; shorter keys are rejected, as the
-  specification requires. As with HMAC, a key should be at least as long as
-  the hash output (`output_size/1`). Keys longer than the output add no
-  security, because keys longer than the block size are hashed first and the
-  hash output caps the security level. This library does not warn about key
-  lengths at runtime.
+  specification requires. The specification and the SequenceHash authors
+  recommend a key as long as the hash output (`output_size/1`). Longer keys
+  add no security, because the security level is capped by the output
+  length. This library does not warn about key lengths at runtime.
 
   ## Handling secrets
 
@@ -31,8 +30,13 @@ defmodule SequenceHash.MAC do
   blocks are not zeroized (a SHOULD in the specification); they are released
   by garbage collection.
 
-  Compare tags with `verify/5`, which uses a constant-time comparison, rather
-  than `==`.
+  Compare tags with `verify/5` or `verify_result/3`, which use a
+  constant-time comparison, rather than `==`.
+
+  Functions that take a key check it in the function body and raise an
+  `ArgumentError` that does not include it. A guard failure would raise a
+  `FunctionClauseError` carrying the arguments, which Logger and crash
+  reports print.
   """
 
   alias SequenceHash.{Algorithm, SequenceFunction}
@@ -53,7 +57,7 @@ defmodule SequenceHash.MAC do
   Starts a new SequenceMAC with `algorithm` and `key`.
 
   Returns `{:error, :key_too_short}` if `key` is shorter than 32 bytes. Raises
-  `ArgumentError` for an unsupported algorithm.
+  `ArgumentError` for an unsupported algorithm or a key that is not a binary.
 
       iex> {:ok, _mac} = SequenceHash.MAC.new(:sha256, :binary.copy(<<1>>, 32))
 
@@ -61,14 +65,19 @@ defmodule SequenceHash.MAC do
       {:error, :key_too_short}
   """
   @spec new(Algorithm.t(), binary()) :: {:ok, t()} | {:error, :key_too_short}
-  def new(algorithm, key) when is_binary(key) do
+  def new(algorithm, key) do
     algorithm = Algorithm.validate!(algorithm)
 
-    if byte_size(key) < @min_key_length do
-      {:error, :key_too_short}
-    else
-      {:ok,
-       %__MODULE__{function: SequenceFunction.new(algorithm, SequenceFunction.f_seqmac(), key)}}
+    cond do
+      not is_binary(key) ->
+        raise ArgumentError, "SequenceMAC keys must be binaries"
+
+      byte_size(key) < @min_key_length ->
+        {:error, :key_too_short}
+
+      true ->
+        {:ok,
+         %__MODULE__{function: SequenceFunction.new(algorithm, SequenceFunction.f_seqmac(), key)}}
     end
   end
 
@@ -139,26 +148,53 @@ defmodule SequenceHash.MAC do
   @doc """
   Checks `tag` against the tag of `inputs`, in constant time.
 
-  Returns `false` for a tag of the wrong length. Raises `ArgumentError` if
-  the key is too short or the algorithm is unsupported, since those are
-  configuration errors rather than verification failures.
+  Returns `false` for a tag that is not a binary of the right length, such as
+  `nil` from a missing header. Raises `ArgumentError` if the key is too short
+  or the algorithm is unsupported, since those are configuration errors
+  rather than verification failures.
 
   ## Options
 
     * `:customizer` - the customization string (default `""`).
   """
-  @spec verify(Algorithm.t(), binary(), Enumerable.t(binary()), binary(), keyword()) ::
+  @spec verify(Algorithm.t(), binary(), Enumerable.t(binary()), term(), keyword()) ::
           boolean()
-  def verify(algorithm, key, inputs, tag, opts \\ []) when is_binary(tag) do
+  def verify(algorithm, key, inputs, tag, opts \\ []) do
+    algorithm
+    |> new!(key)
+    |> add_all(inputs)
+    |> verify_result(tag, opts)
+  end
+
+  @doc """
+  Checks `tag` against the tag of a MAC built with `new/2` and `add/2`, in
+  constant time.
+
+  Use this rather than comparing `result/1` with `==`, which can return early
+  and leak how much of a forged tag is correct. Returns `false` for a tag that
+  is not a binary of the right length.
+
+  ## Options
+
+    * `:customizer` - the customization string (default `""`).
+
+  ## Examples
+
+      iex> key = :binary.copy(<<0x2A>>, 32)
+      iex> {:ok, tag} = SequenceHash.MAC.mac(:sha256, key, ["header", "body"])
+      iex> mac = SequenceHash.MAC.new!(:sha256, key) |> SequenceHash.MAC.add("header")
+      iex> mac |> SequenceHash.MAC.add("body") |> SequenceHash.MAC.verify_result(tag)
+      true
+      iex> SequenceHash.MAC.verify_result(mac, tag)
+      false
+  """
+  @spec verify_result(t(), term(), keyword()) :: boolean()
+  def verify_result(%__MODULE__{} = mac, tag, opts \\ []) do
     [customizer: customizer] = Keyword.validate!(opts, customizer: "")
+    expected = result_with_customizer(mac, customizer)
 
-    expected =
-      algorithm
-      |> new!(key)
-      |> add_all(inputs)
-      |> result_with_customizer(customizer)
-
-    byte_size(tag) == byte_size(expected) and :crypto.hash_equals(expected, tag)
+    is_binary(tag) and byte_size(tag) == byte_size(expected) and
+      :crypto.hash_equals(expected, tag)
   end
 
   @doc """
@@ -173,5 +209,7 @@ defmodule SequenceHash.MAC do
   @spec block_size(t()) :: pos_integer()
   def block_size(%__MODULE__{function: function}), do: Algorithm.block_size(function.algorithm)
 
-  defp add_all(mac, inputs), do: Enum.reduce(inputs, mac, &add(&2, &1))
+  defp add_all(%__MODULE__{function: function} = mac, inputs) do
+    %{mac | function: SequenceFunction.add_all(function, inputs)}
+  end
 end

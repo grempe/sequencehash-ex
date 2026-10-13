@@ -151,5 +151,7 @@ defmodule SequenceHash do
   @spec block_size(t()) :: pos_integer()
   def block_size(%__MODULE__{function: function}), do: Algorithm.block_size(function.algorithm)
 
-  defp add_all(hasher, inputs), do: Enum.reduce(inputs, hasher, &add(&2, &1))
+  defp add_all(%__MODULE__{function: function} = hasher, inputs) do
+    %{hasher | function: SequenceFunction.add_all(function, inputs)}
+  end
 end
