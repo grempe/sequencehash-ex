@@ -1,6 +1,8 @@
 # SequenceHash
 
 [![CI](https://github.com/grempe/sequencehash-ex/actions/workflows/ci.yml/badge.svg)](https://github.com/grempe/sequencehash-ex/actions/workflows/ci.yml)
+[![Hex.pm](https://img.shields.io/hexpm/v/sequencehash.svg)](https://hex.pm/packages/sequencehash)
+[![Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/sequencehash)
 
 An Elixir implementation of [SequenceHash and SequenceMAC](https://c2sp.org/sequencehash),
 hash constructions that hash a *sequence* of byte strings unambiguously. It

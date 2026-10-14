@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-13
+
+Initial release.
+
 ### Added
 
 - `SequenceHash`: SequenceHash with streaming (`new/1`, `add/2`, `result/1`,
@@ -21,3 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Benchee benchmarks in `bench/`.
 - Opt-in differential tests against the upstream Python and Rust
   implementations (`mix test.differential`).
+
+[Unreleased]: https://github.com/grempe/sequencehash-ex/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/grempe/sequencehash-ex/releases/tag/v0.1.0
